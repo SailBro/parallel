@@ -1,0 +1,20 @@
+import numpy as np
+import pandas as pd
+n=100
+l=np.random.randn(n)
+array=np.random.randn(n*n)
+print(l)
+print(array)
+
+#列表转成series
+L=pd.Series(l)
+A=data0=pd.Series(array)
+
+#series导入excel
+writer = pd.ExcelWriter("D:/test_code/cache/L.xlsx")
+L.to_excel(writer, float_format='%.5f')
+writer.save()
+
+writer1 = pd.ExcelWriter("D:/test_code/cache/A.xlsx")
+A.to_excel(writer1, float_format='%.5f')
+writer1.save()

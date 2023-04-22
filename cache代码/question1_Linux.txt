@@ -1,0 +1,72 @@
+#include <iostream>
+#include<stdlib.h>
+#include<fstream>
+#include<ostream>
+#include<stdio.h>
+#include <sys/time.h>
+#include <unistd.h>
+using namespace std;
+
+int main()
+{
+    int n=200;
+
+    fstream file;
+    file.open("D:/test_code/cache/L_200.txt");
+    float*l=new float[n];
+    for(int i=0;i<n;i++)
+        file>>l[i];
+    file.close();
+
+    file.open("D:/test_code/cache/A_200.txt");
+    float**A=new float*[n];
+    for(int i=0;i<n;i++)
+        A[i]=new float[n];
+    for(int i=0;i<n;i++)
+        for(int j=0;j<n;j++)
+            file>>A[i][j];
+
+
+    float*res=new float[n];
+    float*res1=new float[n];
+    float temp=0;
+
+    struct timeval t1,t2,t3,t4;
+    double timeuse;
+
+
+     //平凡算法
+    gettimeofday(&t1,NULL);
+    for(int i = 0; i < n; i++)
+    {
+        res[i] = 0.0;
+        for(int j = 0; j < n; j++)
+            res[i] += A[j][i]*l[j ];
+    }
+    gettimeofday(&t2,NULL);
+    double t11= (t2.tv_sec - t1.tv_sec) + (double)(t2.tv_usec - t1.tv_usec)/1000000.0;
+
+
+    //cache优化算法
+    gettimeofday(&t3,NULL);
+    for(int i = 0; i < n; i++)
+        res1[i] = 0.0;
+    for(int j = 0; j < n; j++)
+        for(int i = 0; i < n; i++)
+            res1[i] += A[j][i]*l[j];
+    gettimeofday(&t4,NULL);
+    double t22= (t4.tv_sec - t3.tv_sec) + (double)(t4.tv_usec - t3.tv_usec)/1000000.0;
+
+
+
+
+    cout<<"t1:"<<t11<<"s"<<endl;
+    cout<<"t2:"<<t22<<"s"<<endl;
+    
+    
+    
+
+
+
+    return 0;
+}

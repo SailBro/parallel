@@ -1,0 +1,14 @@
+mport numpy as np
+import pandas as pd
+n=100000
+l= np.random.randint(1, 20000, size=n)
+
+print(l)
+
+#列表转成series
+L=pd.Series(l)
+
+#series导入excel
+writer = pd.ExcelWriter("D:/test_code/cache/x_100000.xlsx")
+L.to_excel(writer, float_format='%.5f')
+writer.save()
