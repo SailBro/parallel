@@ -1,0 +1,31 @@
+import re
+
+numbers = []  # 存储浮点数的列表
+
+with open("D:/test_code/Kmeans/abalone.txt", "r") as file:  # 打开文本文件
+    content = file.read()  # 读取文件内容
+
+    # 使用正则表达式提取浮点数
+    pattern = r"[-+]?\d*\.\d+|\d+"  # 匹配浮点数的正则表达式模式
+    matches = re.findall(pattern, content)
+
+    # 将匹配到的字符串转换为浮点数并添加到列表中
+    for match in matches:
+        try:
+            number = float(match)
+            numbers.append(number)
+        except ValueError:
+            # 若转换失败，则继续下一个字符串
+            pass
+
+# 打印读取的浮点数
+for num in numbers:
+    print(num)
+    
+
+# 将处理结果写入输出文件
+with open("D:/test_code/Kmeans/abalone1.txt", "w") as output_file:  # 打开输出文本文件
+    for num in numbers:
+        output_file.write(str(num) + "\n")  # 将浮点数写入文件，并添加换行符
+
+print("处理结果已写入 output.txt 文件。")
