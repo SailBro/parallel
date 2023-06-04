@@ -1,0 +1,13 @@
+import numpy as np
+import pandas as pd
+
+#l=np.random.randn(n)
+l=np.random.uniform(1, 100, [10000,100])
+#print(l)
+
+data_df=pd.DataFrame(l)
+
+#series导入excel
+writer = pd.ExcelWriter("D:/test_code/Kmeans/data.xlsx")
+data_df.to_excel(writer, float_format='%.5f')
+writer.save()

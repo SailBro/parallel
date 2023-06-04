@@ -1,0 +1,442 @@
+#include<iostream>
+#include<mpi.h>
+#include<fstream>
+#include<math.h>
+#include<iomanip>
+#include<windows.h>
+#pragma comment(lib, "winmm.lib")
+using namespace std;
+#define Number 20001 //模式样本的最大维数与个数
+const int n = 40; //扩展后的维度
+const int n0 = 4;//原有维度
+const int m = 40; //模式样本的个数
+const int k = 4; //用于K-means算法的k值
+//struct Node //定义了一个用于存放模式样本的数据结构
+//{
+//	float element[Number] = { 0 };//模式样本
+//	int kinds = 0; //模式样本所属类别，0为未分类状态
+//} X[Number];
+
+float X[m][n + 1];
+float Z[k][n + 1];
+int number; //用于记录迭代计算轮数
+float* D; //用于存放迭代计算中距离的变量
+int* N; //用于统计每个模式类中的模式样本数
+int(*S)[10000]; //用于统计每个模式类中的模式样本
+int condition; //算法结束的条件
+int Ktally;//迭代此处
+
+float Distance(float* X, float* Z, int n) //欧式距离计算函数
+{
+	float result = 0;
+	for (int i = 0; i < n; i++)
+	{
+		result = result + (X[i] - Z[i]) * (X[i] - Z[i]);
+	}
+	result = sqrt(result);
+	return result;
+}
+
+void Add(float* result, float* X, int n) //矩阵加法
+{
+	for (int i = 0; i < n; i++)
+	{
+		result[i] = result[i] + X[i];
+	}
+}
+
+void Kmeans(int argc, char* argv[],int myid,int numprocs) //K-means算法中迭代计算函数
+{
+	//进程创建
+	//int myid, numprocs;
+	int localnum;//各进程计算量
+	//MPI_Init(&argc, &argv);
+	//MPI_Comm_rank(MPI_COMM_WORLD, &myid);
+	//MPI_Comm_size(MPI_COMM_WORLD, &numprocs);
+	//printf("进程%d读取数据完毕", myid);
+	//cout << endl;
+
+	number = 0; //用于记录迭代计算轮数
+	D = new float[k]; //用于存放迭代计算中距离的变量
+	N = new int[k](); //用于统计每个模式类中的模式样本数
+	S = new int[k][10000]; //用于统计每个模式类中的模式样本
+	condition = 1; //算法结束的条件
+
+	while (1) //迭代运算
+	{
+		if (number >= 300)
+			break;
+		number++;
+		//cout << number;
+		printf("进程%d第%d次迭代", myid, number);
+		cout << endl;
+		condition = 1;
+		for (int i = 0; i < k; i++) //对Ni进行初始化
+		{
+			N[i] = 0;
+		}
+		float oldZ[100][20];
+
+		
+		localnum = m / numprocs;
+		int start = localnum * myid;
+		int end = start + localnum - 1;
+		for (int i = start; i <= end; i++)
+		{
+			//计算该点到k个聚类中心的距离
+			for (int j = 0; j < k; j++)
+			{
+				D[j] = 0;//到该聚类中心的距离初始化为0
+				for (int s = 0; s < n; s++) {
+					//计算当前维度的距离
+					float x = X[i][s];
+					float z = Z[j][s];
+					float res = (x - z) * (x - z);
+					D[j] += res;
+				}
+			}
+			//选距离最小作为聚类中心
+			int temp = 0;
+			for (int j = 0; j < k; j++)
+			{
+				cout << D[j] << endl;
+				if (D[temp] > D[j])
+					temp = j;
+				//X[i].kinds = temp + 1;
+				X[i][n] = temp + 1;
+			}
+		}
+
+		float tempx[m * (n + 1)];
+		//先放置tempx中
+		int tempTally = 0;
+		for (int i = start;i <= end;i++)
+			for (int j = 0;j < n + 1;j++)
+				tempx[tempTally++] = X[i][j];
+		//进程同步，各进程数据传入进程0中
+		if (myid != 0) {
+			/*for (int i = 0;i < tempTally;i++)
+				cout << tempx[i] << endl;*/
+
+			MPI_Send(&tempx, tempTally, MPI_FLOAT, 0, myid,
+				MPI_COMM_WORLD);
+			printf("进程%dsend数据成功", myid);
+			cout << endl;
+		}
+		else {
+			//用tempx接收
+			for (int id = 1;id < numprocs;id++)
+				MPI_Recv(&tempx[id * localnum * (n + 1)], localnum * (n + 1), MPI_FLOAT, id, id,
+					MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+			//接收后切割
+			for (int i = 0;i < m * (n + 1);i++) {
+				X[i % m][i % (n + 1)] = tempx[i];
+				//cout << tempx[i] << endl;
+			}
+		}
+		//0进程内统计样本
+		if (myid == 0) {
+			/* 统计每个模式类中的样本数和样本 */
+			for (int i = 0; i < k; i++)
+			{
+				cout << "第" << number << "次迭代计算后，模式类" << i + 1 << "中包括{ ";
+				int temp = 0;
+				for (int j = 0; j < m; j++)
+				{
+					if ((int)X[j][n] == (i + 1))
+					{
+						N[i]++;
+						S[i][temp] = j;
+						cout << "X" << S[i][temp] + 1 << " ";
+						temp++;
+					}
+				}
+				cout << "}\n";
+			}
+
+			//保存本次计算前的聚类中心
+			for (int i = 0; i < k; i++)
+			{
+				for (int j = 0; j < n; j++)
+				{
+					oldZ[i][j] = Z[i][j];
+				}
+			}
+		}
+
+		//0线程发送消息，并重新分配
+		//先讲oldZ数据发送和接收
+		float temp_oldZ[2000];
+
+		if (myid == 0) {
+			//放置1维数组传送
+			for (int i = 0;i < k * (n + 1);i++)
+				temp_oldZ[i] = oldZ[i % k][i % (n + 1)];
+			for (int id = 1;id < numprocs;id++)
+				MPI_Send(&temp_oldZ, k * (n + 1), MPI_FLOAT, id, id,
+					MPI_COMM_WORLD);
+		}
+		else {
+			MPI_Recv(&temp_oldZ, k * (n + 1), MPI_FLOAT, 0, myid,
+				MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+			printf("进程%d成功接收oldZ", myid);
+			cout << endl;
+			//切分处理
+			for (int i = 0;i < k * (n + 1);i++)
+				oldZ[i % k][i % (n + 1)] = temp_oldZ[i];
+		}
+
+		cout << endl;
+		printf("进程%d的oldZ如下：", myid);
+		for (int i = 0;i < k;i++)
+			cout << oldZ[i][0] << " ";
+		cout << endl;
+	
+		//截至该行，已经完成了优化
+		//计算聚类中心
+		for (int i = 0; i < k; i++)
+		{
+			float result[20];
+			for (int j = 0; j < N[i]; j++)
+			{
+				Add(result, X[S[i][j]], n);
+			}
+			for (int j = 0; j < n; j++)
+			{
+				Z[i][j] = ((result[j]) / N[i]);
+			}
+		}
+
+		/* 判断是否符合迭代结束条件 */
+		/*for (int i = 0; i < k; i++)
+		{
+			cout << "第" << number << "次迭代计算后聚类中心Z" << i + 1 << "=( ";
+			for (int j = 0; j < n; j++)
+			{
+				cout << Z[i].element[j] << " ";
+			}
+			cout << ")\n";
+		}*/
+
+		for (int i = 0; i < k; i++)
+		{
+			for (int j = 0; j < n; j++)
+			{
+				if (Z[i][j] != oldZ[i][j])
+					condition = 0;
+			}
+		}
+
+
+		if (condition == 1) {
+			Ktally = number;
+			break;
+		}
+	}
+}
+void testMPI(int argc, char* argv[]) {
+	int myid, numprocs, namelen;
+	char processor_name[MPI_MAX_PROCESSOR_NAME];
+	int local_data[100];
+	int global_data[100];
+	MPI_Init(&argc, &argv);
+	MPI_Comm_rank(MPI_COMM_WORLD, &myid);
+	MPI_Comm_size(MPI_COMM_WORLD, &numprocs);
+	MPI_Get_processor_name(processor_name, &namelen);
+
+	//printf("%s: Hello world from process %d \n", processor_name, myid);
+	//int sumOfRank=0;
+	/*MPI_Reduce(&myid, &sumOfRank, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
+	if (myid == 0) {
+		printf("sum:%d", sumOfRank);
+	}*/
+
+	int local_num = 25;
+	int start = local_num * myid;
+	int end = start + local_num - 1;
+
+	if (myid == 0)
+		for (int i = 0;i < 100;i++)
+			global_data[i] = 2;
+
+	for (int i = start;i <= end;i++)
+		local_data[i] = 1;
+	printf("进程%d初始化完成", myid);
+	cout << endl;
+
+	for (int i = start;i <= end;i++)
+		cout << local_data[i] << " ";
+	cout << endl;
+
+	if (myid == 0)
+		for (int k = 1;k <= 3;k++)
+			MPI_Send(&global_data[k * local_num], 1 * local_num, MPI_INT, k, k,
+				MPI_COMM_WORLD);
+	else
+		MPI_Recv(&local_data[start], 1 * local_num, MPI_INT, 0, myid,
+			MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+	for (int i = start;i <= end;i++)
+		local_data[i] = i;
+	printf("进程%d赋值完成", myid);
+	cout << endl;
+
+	for (int i = start;i <= end;i++)
+		cout << local_data[i] << " ";
+	cout << endl;
+
+	if (myid != 0)
+		MPI_Send(&local_data[start], 1 * local_num, MPI_INT, 0, 100 + myid,
+			MPI_COMM_WORLD);
+	else {
+		for (int k = 1;k <= 3;k++)
+			MPI_Recv(&global_data[k * local_num], 1 * local_num, MPI_INT, k, 100 + k,
+				MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+	}
+
+	if (myid == 0) {
+		for (int i = 0;i < 100;i++)
+			cout << global_data[i] << " ";
+		cout << endl;
+	}
+
+
+	MPI_Finalize();
+}
+float Gauss(float* v1, float* v2) {
+	float res = 0;
+	for (int i = 0;i < n0;i++)
+		res += v1[i] * v2[i];
+	//cout << res << endl;
+	return res;
+}
+int main(int argc, char* argv[]) {
+	//testMPI(argc, argv);
+	//return 0;
+
+	/* 数据的输入与初始化 */
+
+	fstream file;
+	file.open("D:/test_code/Kmeans/data1.txt");
+	for (int i = 0; i < m; i++)
+	{
+		for (int j = 0; j < n0; j++)
+		{
+			file >> X[i][j];
+			//cout << X[i].element[j] << " ";
+		}
+		//cout << endl;
+	}
+
+	//高斯核函数映射
+	//用高斯核函数映射到高维度
+	int myid, numprocs;
+	int localnum;//各进程计算量
+	MPI_Init(&argc, &argv);
+	MPI_Comm_rank(MPI_COMM_WORLD, &myid);
+	MPI_Comm_size(MPI_COMM_WORLD, &numprocs);
+	printf("进程%d读取数据完毕", myid);
+	cout << endl;
+
+	float** newData = new float* [m];
+	for (int i = 0;i < m;i++)
+		newData[i] = new float[m];
+
+	localnum = m / numprocs;
+	int start = localnum * myid;
+	int end = start + localnum - 1;
+
+	for (int i = start;i <=end;i++) {
+		for (int j = 0;j < m;j++) {
+			newData[i][j] = Gauss(X[i], X[j]);
+		}
+		//cout << endl;
+	}
+	//更新维度
+	for (int i = start;i <=end;i++) {
+		for (int j = 0;j < m;j++) {
+			X[i][j] = newData[i][j];
+			cout << X[i][j] << " ";
+		}
+		cout << endl;
+	}
+	//传送给各个进程
+	float tempx[m * (n + 1)];
+	//先放置tempx中
+	int tempTally = 0;
+	for (int i = start;i <= end;i++)
+		for (int j = 0;j < n + 1;j++)
+			tempx[tempTally++] = X[i][j];
+	//非0进程传输
+	if (myid != 0) {
+		
+		MPI_Send(&tempx, tempTally, MPI_FLOAT, 0, myid,
+			MPI_COMM_WORLD);
+		printf("进程%dsend数据成功", myid);
+		cout << endl;
+	}
+	else {//0进程整合
+		//用tempx接收
+		for (int id = 1;id < numprocs;id++)
+			MPI_Recv(&tempx[id * localnum * (n + 1)], localnum * (n + 1), MPI_FLOAT, id, id,
+				MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+	}
+	//0进程整合后再发送
+	if (myid == 0) {
+		for (int id = 1;id < numprocs;id++)
+			MPI_Send(&tempx, m* (n + 1), MPI_FLOAT, id, id,
+				MPI_COMM_WORLD);
+	}
+	else {
+		MPI_Recv(&tempx, m * (n + 1), MPI_FLOAT, 0, myid,
+			MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+		printf("进程%d成功接收oldZ", myid);
+		cout << endl;
+		//切分处理
+		for (int i = 0;i < m* (n + 1);i++)
+			X[i % m][i % (n + 1)] = tempx[i];
+	}
+
+	LARGE_INTEGER start1, end1, frequency;
+	QueryPerformanceFrequency(&frequency);
+
+	QueryPerformanceCounter(&start1);
+
+	for (int xx = 0;xx < 4;xx++) {
+
+		/* 根据用户输入的k值初始化聚类中心 */
+		//Z = new Node[k]; //聚类中心
+		for (int i = 0; i < k; i++)
+		{
+			for (int j = 0; j < n; j++)
+			{
+				Z[i][j] = X[i][j];
+				//cout << Z[i].element[0] << " ";
+			}
+		}
+
+		/* 迭代计算聚类中心 */
+		Kmeans(argc, argv,myid,numprocs);
+
+		/* 输出计算结果 */
+		/*cout << "经过计算\n";
+		for (int i = 0; i < k; i++)
+		{
+			cout << "聚类中心Z" << i + 1 << "=( ";
+			for (int j = 0; j < n; j++)
+			{
+				cout << Z[i].element[j] << " ";
+			}
+			cout << ")\n";
+		}*/
+	}
+	QueryPerformanceCounter(&end1);
+	double res = static_cast<double>
+		(end1.QuadPart - start1.QuadPart) / frequency.QuadPart;
+	printf("(n=%d,m=%d,k=%d)", n, m, k);
+	cout << endl;
+	printf("共用时%.2f，平均用时%.2fs", res, res / 4);
+
+	
+	return 0;
+}
