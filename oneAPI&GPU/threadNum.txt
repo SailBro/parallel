@@ -1,0 +1,238 @@
+/* K-均值算法 */
+#include<iostream>
+#include<fstream>
+#include<math.h>
+#include<iomanip>
+#include <cmath>
+#include <cuda.h>
+#include <cuda_runtime.h>
+
+#include<windows.h>
+#pragma comment(lib, "winmm.lib")
+
+using namespace std;
+#define Number 20000 //模式样本的最大维数与个数
+#define ThreadNum 4//线程处理的样本数
+
+struct Node //定义了一个用于存放模式样本的数据结构
+{
+	float element[Number] = { 0 };//模式样本
+	int kinds = 0; //模式样本所属类别，0为未分类状态
+} X[Number];
+
+int n; //模式样本的维数
+int m; //模式样本的个数
+int k; //用于K-means算法的k值
+Node* Z;
+int number; //用于记录迭代计算轮数
+float* D; //用于存放迭代计算中距离的变量
+int* N; //用于统计每个模式类中的模式样本数
+int(*S)[10000]; //用于统计每个模式类中的模式样本
+int condition; //算法结束的条件
+int Ktally;
+
+float Distance(Node X, Node Z, int n) //欧式距离计算函数
+{
+	float result = 0;
+	for (int i = 0; i < n; i++)
+	{
+		result = result + (X.element[i] - Z.element[i]) * (X.element[i] - Z.element[i]);
+	}
+	result = sqrt(result);
+	return result;
+}
+
+void Add(Node& result, Node X, int n) //矩阵加法
+{
+	for (int i = 0; i < n; i++)
+	{
+		result.element[i] = result.element[i] + X.element[i];
+	}
+}
+__global__ void Kmeans_kernel(int n, int m, int k, Node* X, Node* Z, int* Kinds, int* N, int* S, int threadNum)
+{
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+	int start = idx * threadNum;  // 起始数据点索引
+	int end = start + threadNum;  // 结束数据点索引
+	for (int i = start; i < end && i < m; i++)
+	{
+		//计算该点到k个聚类中心的距离
+		for (int j = 0; j < k; j++)
+		{
+			D[j] = 0;//到该聚类中心的距离初始化为0
+			for (int s = 0; s < n; s++) {
+				//计算当前维度的距离
+				float x = X[i].element[s];
+				float z = Z[j].element[s];
+				float res = (x - z) * (x - z);
+				D[j] += res;
+			}
+		}
+		//选距离最小作为聚类中心
+		int temp = 0;
+		for (int j = 0; j < k; j++)
+		{
+			if (D[temp] > D[j])
+				temp = j;
+			X[i].kinds = temp + 1;
+		}
+	}
+	// 等待所有线程完成任务
+	__syncthreads();
+
+	// 更新聚类中心
+	if (idx < k) {
+		int count = 0;
+		float sum[Number] = { 0 };
+		for (int j = 0; j < m; j++) {
+			if (Kinds[j] == (idx + 1)) {
+				count++;
+				for (int s = 0; s < n; s++) {
+					sum[s] += X[j].element[s];
+				}
+			}
+		}
+		if (count > 0) {
+			for (int s = 0; s < n; s++) {
+				Z[idx].element[s] = sum[s] / count;
+			}
+		}
+	}
+
+
+	// 等待主线程更新
+	__syncthreads();
+}
+
+void Kmeans(int myxx) //K-means算法中迭代计算函数
+{
+	// 在GPU上分配和传输数据
+	Node* d_X;  // 存放模式样本的设备数组
+	Node* d_Z;  // 存放聚类中心的设备数组
+	float* d_D; // 存放距离的设备数组
+	int* d_N;   // 存放模式类中样本数的设备数组
+	int(*d_S)[10000]; // 存放模式类中样本索引的设备数组
+
+	cudaMalloc((void**)&d_X, m * sizeof(Node));
+	cudaMalloc((void**)&d_Z, k * sizeof(Node));
+	cudaMalloc((void**)&d_D, k * sizeof(float));
+	cudaMalloc((void**)&d_N, k * sizeof(int));
+	cudaMalloc((void**)&d_S, k * 10000 * sizeof(int));
+
+	cudaMemcpy(d_X, X, m * sizeof(Node), cudaMemcpyHostToDevice);
+	cudaMemcpy(d_Z, Z, k * sizeof(Node), cudaMemcpyHostToDevice);
+
+	while (1) {
+		number++;
+		printf("第%d次迭代\n", number);
+
+		// 调用GPU上的核函数进行并行计算
+		dim3 dimBlock(BLOCK_SIZE, 1);
+		dim3 dimGrid((m + BLOCK_SIZE - 1) / BLOCK_SIZE, 1);
+		Kmeans_kernel << <dimGrid, dimBlock >> > (n, m, k, d_X, d_Z, d_D, d_N, d_S,threadNum);
+
+		// 在GPU上传输计算结果
+		cudaMemcpy(D, d_D, k * sizeof(float), cudaMemcpyDeviceToHost);
+		cudaMemcpy(N, d_N, k * sizeof(int), cudaMemcpyDeviceToHost);
+		cudaMemcpy(S, d_S, k * 10000 * sizeof(int), cudaMemcpyDeviceToHost);
+
+		// 判断是否符合迭代结束条件
+		for (int i = 0; i < k; i++)
+		{
+			for (int j = 0; j < n; j++)
+			{
+				if (Z[i].element[j] != oldZ[i].element[j])
+					condition = 0;
+			}
+		}
+
+		if (condition == 1) {
+			Ktally = number;
+			break;
+		}
+	}
+
+	// 释放GPU上的内存
+	cudaFree(d_X);
+	cudaFree(d_Z);
+	cudaFree(d_D);
+	cudaFree(d_N);
+	cudaFree(d_S);
+}
+
+int main()
+{
+	/* 数据的输入与初始化 */
+
+	n = 4;
+	m = 20000;
+	k = 8;
+	fstream file;
+	file.open("D:/test_code/Kmeans/data1.txt");
+	for (int i = 0; i < m; i++)
+	{
+		for (int j = 0; j < n; j++)
+		{
+			file >> X[i].element[j];
+			//cout << X[i].element[j] << " ";
+		}
+		//cout << endl;
+	}
+	cout << "数据加载完毕" << endl;
+
+	/*while (1)
+	{
+		cout << "请输入本次聚类分析需要将模式样本分成的类数（k值）：";
+		cin >> k;
+		if (k <= 1)
+			cout << "k值需为大于等于1的整数";
+		else
+			break;
+	}*/
+
+	LARGE_INTEGER start, end, frequency;
+	QueryPerformanceFrequency(&frequency);
+
+	QueryPerformanceCounter(&start);
+
+	for (int xx = 0;xx < 4;xx++) {
+
+		/* 根据用户输入的k值初始化聚类中心 */
+		Z = new Node[k]; //聚类中心
+		for (int i = 0; i < k; i++)
+		{
+			for (int j = 0; j < n; j++)
+			{
+				Z[i].element[j] = X[i].element[j];
+				//cout << Z[i].element[0] << " ";
+			}
+		}
+
+		/* 迭代计算聚类中心 */
+		printf("外层第%d次计算开始", xx + 1);
+		cout << endl;
+		Kmeans(xx);
+		printf("外层第%d次计算结束", xx + 1);
+		cout << endl;
+		/* 输出计算结果 */
+		/*cout << "经过计算\n";
+		for (int i = 0; i < k; i++)
+		{
+			cout << "聚类中心Z" << i + 1 << "=( ";
+			for (int j = 0; j < n; j++)
+			{
+				cout << Z[i].element[j] << " ";
+			}
+			cout << ")\n";
+		}*/
+	}
+	QueryPerformanceCounter(&end);
+	double res = static_cast<double>
+		(end.QuadPart - start.QuadPart) / frequency.QuadPart;
+	printf("(n=%d,m=%d,k=%d)", n, m, k);
+	cout << endl;
+	printf("共用时%.2fs，平均用时%.2fs", res, res / 4);
+
+	delete[] Z;
+	return 0;
+}
