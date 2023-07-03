@@ -1,0 +1,369 @@
+#include<iostream>
+#include<opencv2/imgcodecs.hpp>
+#include<opencv2/highgui.hpp>
+#include<opencv2/imgproc.hpp>
+#include<fstream>
+#include<ostream>
+#include<math.h>
+#include<iomanip>
+#include<string.h>
+#include<pthread.h>
+
+#include<windows.h>
+#pragma comment(lib, "winmm.lib")
+
+using namespace std;
+using namespace cv;
+
+#define Number 20000 //模式样本的最大维数与个数
+#define LIMIT 10
+#define ThreadNum 6
+typedef struct {
+	int threadId;
+	int n;
+}threadParam_t;
+struct NodeData //定义了一个用于存放模式样本的数据结构
+{
+	float element[Number] = { 0 };//模式样本
+	int kinds = 0; //模式样本所属类别，0为未分类状态
+} X[Number];
+
+int n; //模式样本的维数
+int m; //模式样本的个数
+int k; //用于K-means算法的k值
+NodeData* Z;
+int number; //用于记录迭代计算轮数
+float* D; //用于存放迭代计算中距离的变量
+int* N; //用于统计每个模式类中的模式样本数
+int(*S)[10000]; //用于统计每个模式类中的模式样本
+int condition; //算法结束的条件
+
+
+float Distance(NodeData X, NodeData Z, int n) //欧式距离计算函数
+{
+	float result = 0;
+	for (int i = 0; i < n; i++)
+	{
+		result = result + (X.element[i] - Z.element[i]) * (X.element[i] - Z.element[i]);
+	}
+	result = sqrt(result);
+	return result;
+}
+
+void Add(NodeData& result, NodeData X, int n) //矩阵加法
+{
+	for (int i = 0; i < n; i++)
+	{
+		result.element[i] = result.element[i] + X.element[i];
+	}
+}
+void* threadFunc(void* param) {
+	threadParam_t* p = (threadParam_t*)param;
+	int n = p->n;
+	int Id = p->threadId;
+	int my_n = n / ThreadNum;
+	int my_first = my_n * Id;
+	int my_last = my_first + my_n - 1;
+	for (int i = my_first; i <= my_last; i++) {
+		int res = X[i].kinds - 1;//0开始
+		int posX = X[i].element[0];
+		int posY = X[i].element[1];
+		ResImg[res].at<cv::Vec3b>(posX, posY) = cv::Vec3b(
+			X[i].element[2], X[i].element[3], X[i].element[4]);
+	}
+	pthread_exit(NULL);
+	return p;
+}
+void Kmeans() //K-means算法中迭代计算函数
+{
+	number = 0; //用于记录迭代计算轮数
+	D = new float[k]; //用于存放迭代计算中距离的变量
+	N = new int[k](); //用于统计每个模式类中的模式样本数
+	S = new int[k][10000]; //用于统计每个模式类中的模式样本
+	condition = 1; //算法结束的条件
+
+	while (1) //迭代运算
+	{
+		number++;
+		if (number >= LIMIT)
+			break;
+		condition = 1;
+		for (int i = 0; i < k; i++) //对Ni进行初始化
+		{
+			N[i] = 0;
+		}
+		/* 分别计算各点与聚类中心的距离 */
+		for (int i = 0; i < m; i++)
+		{
+			//计算该点到k个聚类中心的距离
+			for (int j = 0; j < k; j++)
+			{
+				D[j] = 0;//到该聚类中心的距离初始化为0
+				for (int s = 0; s < n; s++) {
+					//计算当前维度的距离
+					float x = X[i].element[s];
+					float z = Z[j].element[s];
+					float res = (x - z) * (x - z);
+					D[j] += res;
+				}
+			}
+			//选距离最小作为聚类中心
+			int temp = 0;
+			for (int j = 0; j < k; j++)
+			{
+				if (D[temp] > D[j])
+					temp = j;
+				X[i].kinds = temp + 1;
+			}
+		}
+
+		/* 统计每个模式类中的样本数和样本 */
+		for (int i = 0; i < k; i++)
+		{
+			cout << "第" << number << "次迭代计算后，模式类" << i + 1 << "中包括{ ";
+			int temp = 0;
+			for (int j = 0; j < m; j++)
+			{
+				if (X[j].kinds == (i + 1))
+				{
+					N[i]++;
+					S[i][temp] = j;
+					//cout << "X" << S[i][temp] + 1 << " ";
+					cout << "(" << X[j].element[0] << "," <<
+						X[j].element[1] << ")" << " ";
+					temp++;
+				}
+			}
+			cout << "}\n";
+		}
+
+		/* 计算新的聚类中心 */
+		NodeData* oldZ = new NodeData[k]; //保存本次计算前的聚类中心
+		for (int i = 0; i < k; i++)
+		{
+			for (int j = 0; j < n; j++)
+			{
+				oldZ[i].element[j] = Z[i].element[j];
+			}
+		}
+		//计算聚类中心
+		for (int i = 0; i < k; i++)
+		{
+			NodeData result;
+			for (int j = 0; j < N[i]; j++)
+			{
+				Add(result, X[S[i][j]], n);
+			}
+			for (int j = 0; j < n; j++)
+			{
+				Z[i].element[j] = ((result.element[j]) / N[i]);
+			}
+		}
+
+		/* 判断是否符合迭代结束条件 */
+		for (int i = 0; i < k; i++)
+		{
+			cout << "第" << number << "次迭代计算后聚类中心Z" << i + 1 << "=( ";
+			for (int j = 0; j < n; j++)
+			{
+				cout << Z[i].element[j] << " ";
+			}
+			cout << ")\n";
+		}
+		for (int i = 0; i < k; i++)
+		{
+			for (int j = 0; j < n; j++)
+			{
+				if (Z[i].element[j] != oldZ[i].element[j])
+					condition = 0;
+			}
+		}
+
+		delete[] oldZ;
+
+		if (condition == 1)
+			break;
+	}
+}
+
+int main()
+{
+	/* 数据的输入与初始化 */
+	n = 5;
+	m = 0;
+	//m=48*32;
+	k = 4;
+
+	string path = "D:\\test_code\\BSR\\BSDS500\\data\\images\\train\\8049.jpg";//图片的路径名
+	Mat img = imread(path);//将图片加载后赋值到图像变量img中
+	//if (path.empty()) { cout << "file not loaded" << endl; }
+	//检查文件是否打开 没打开时执行打印语句
+	//namedWindow("Image", WINDOW_FREERATIO);//创建一个名为Image的可调节的窗口
+
+	//imshow("Image", img);//创建一个窗口来显示图像img
+	//waitKey(0);//不断刷新图像
+
+	cv::namedWindow("Image0", cv::WINDOW_NORMAL);
+
+	// 在窗口中显示图像
+	cv::imshow("Image0", img);
+
+	// 等待按键
+	cv::waitKey(0);
+	cout << "列：" << img.cols << endl;
+	cout << "行：" << img.rows << endl;
+	cout << "通道数：" << img.channels() << endl;
+
+
+	//传入像素矩阵数据
+	int final_row = 0;
+	int final_col = 0;
+	for (int row = 0; row < img.rows - 4; row += 4) {
+		final_row++;
+		int temp_col = 0;
+		for (int col = 0; col < img.cols - 4; col += 4) {
+			if (row == 0)
+				temp_col++;
+			// 使用 Vec3b 类型访问三个通道的像素值
+			cout << m << "(" << row << "," << col << ")" << endl;
+			cv::Vec3b pixel = img.at<cv::Vec3b>(row, col);
+			X[m].element[0] = row;
+			X[m].element[1] = col;
+
+			// 加载像素值到SSE寄存器
+			__m128i pixelSSE = _mm_loadu_si128(reinterpret_cast<const __m128i*>(&pixel));
+			// 提取像素值的每个通道
+			__m128i channels = _mm_cvtepu8_epi32(pixelSSE);
+			// 将通道值存储到寄存器变量
+			__m128i redGreenBlue = _mm_shuffle_epi32(channels, _MM_SHUFFLE(3, 2, 1, 0));
+			// 存储寄存器变量的值到X数组
+			_mm_storeu_si128(reinterpret_cast<__m128i*>(&X[m].element[2]), redGreenBlue);
+			m++;
+		}
+		if (row == 0)
+			final_col = temp_col;
+	}
+
+	//输出分辨率降低后的图像
+	// 创建一个与data矩阵大小相同的Mat对象，并将data矩阵的数据逐个像素赋值给Mat对象
+
+	cout << final_row << " " << final_col << endl;
+	cv::Mat image(final_row, final_col, CV_8UC3);
+
+	int index = 0;//当前像素在数组中的索引
+	for (int row = 0; row < final_row; ++row) {
+		for (int col = 0; col < final_col; ++col) {
+			//修改坐标
+			X[index].element[0] = row;
+			X[index].element[1] = col;
+			// 逐个通道数据赋值给Mat对象
+			image.at<cv::Vec3b>(row, col) = cv::Vec3b(
+				X[index].element[2], X[index].element[3], X[index].element[4]);
+			index++;
+		}
+	}
+	cv::namedWindow("Image1", cv::WINDOW_NORMAL);
+
+	// 在窗口中显示图像
+	cv::imshow("Image1", image);
+
+	// 等待按键
+	cv::waitKey(0);
+
+	//namedWindow("Image", WINDOW_FREERATIO);//创建一个名为Image的可调节的窗口
+
+	//imshow("Image", image);//创建一个窗口来显示图像img
+	//waitKey(0);//不断刷新图像
+
+
+
+	//聚类过程
+	LARGE_INTEGER start, end, frequency;
+	QueryPerformanceFrequency(&frequency);
+
+	QueryPerformanceCounter(&start);
+
+	for (int xx = 0;xx < 4;xx++) {
+
+		/* 根据用户输入的k值初始化聚类中心 */
+		Z = new NodeData[k]; //聚类中心
+		for (int i = 0; i < k; i++)
+		{
+			for (int j = 0; j < n; j++)
+			{
+				Z[i].element[j] = X[i].element[j];
+				cout << Z[i].element[0] << " ";
+			}
+		}
+
+		/* 迭代计算聚类中心 */
+		Kmeans();
+
+		/* 输出计算结果 */
+		cout << "经过计算\n";
+		for (int i = 0; i < k; i++)
+		{
+			cout << "聚类中心Z" << i + 1 << "=( ";
+			for (int j = 0; j < n; j++)
+			{
+				cout << Z[i].element[j] << " ";
+			}
+			cout << ")\n";
+		}
+	}
+	QueryPerformanceCounter(&end);
+	double res = static_cast<double>
+		(end.QuadPart - start.QuadPart) / frequency.QuadPart;
+	cout << endl << res / 4;//秒为单位
+
+	delete[] Z;
+
+	//展示结果
+	//k个
+	// 创建一个存储Mat对象的向量
+	std::vector<cv::Mat> ResImg;
+	for (int i = 0; i < k; i++) {
+		// 创建一个与指定行数、列数的三通道图像
+		//各通道初始都为0
+		cv::Mat tempImg(final_row, final_col, CV_8UC3, cv::Scalar(0, 0, 0));
+		// 将image对象添加到向量中
+		ResImg.push_back(tempImg);
+	}
+	//将k个聚类结果载入
+	//遍历m个样本给像素点赋值
+	//创建句柄
+	pthread_t handles[ThreadNum];
+	//创建线程结构
+	threadParam_t param[ThreadNum];
+	//分配任务
+	for (int i = 0;i < ThreadNum;i++) {
+		param[i].threadId = i;
+		param[i].n = m;
+	}
+	//创建线程
+	for (int i = 0;i < ThreadNum;i++)
+		pthread_create(&handles[i], NULL, threadFunc, &param[i]);
+	//清空
+	for (int i = 0;i < ThreadNum;i++)
+		pthread_join(handles[i], NULL);
+
+
+
+	string* flag = new string[k];
+	flag[0] = "0";
+	flag[1] = "1";
+	flag[2] = "2";
+	flag[3] = "3";
+
+	for (int i = 0;i < k;i++) {
+		cv::namedWindow(flag[i], cv::WINDOW_NORMAL);
+		// 在窗口中显示图像
+		cv::imshow(flag[i], ResImg[i]);
+		// 等待按键
+		cv::waitKey(0);
+	}
+
+
+
+	return 0;
+}
